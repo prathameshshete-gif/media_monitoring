@@ -29,9 +29,13 @@ and their briefs are configuration worth keeping.
 
 ## Install
 
-    pip install requests beautifulsoup4 lxml protego pandas openpyxl \
-                fastapi uvicorn sentence-transformers \
-                langchain-core langchain-google-genai python-dotenv
+    pip install -r requirements.txt
+
+`requirements.txt` deliberately leaves out torch: the PyPI wheel pulls ~2.5 GB
+of CUDA libraries that are dead weight on a CPU box. Install the CPU build
+first if you want the small one:
+
+    pip install --index-url https://download.pytorch.org/whl/cpu torch==2.10.0
 
 Then put your key in `.env` at the project root:
 
@@ -444,6 +448,132 @@ API caller that omits it gets a clear failure on the report step — the run sti
 completes and the articles are kept — rather than a report written to some other
 entity's brief. `report_llm.build_report()` keeps the stock brief as its default
 argument for the CLI path only.
+
+# Deployment
+
+Live at <https://media-monitoring.duckdns.org>, behind HTTP basic auth. The box
+is a 2 vCPU / 3.7 GB EC2 instance shared with other services, which shapes most
+of the decisions below.
+
+## Shape of it
+
+    GitHub push to main
+      -> Actions builds the image, pushes to ghcr.io
+      -> Actions SSHes to EC2, pulls, restarts the container
+    nginx (host, :443, TLS + basic auth)
+      -> container on 127.0.0.1:8010
+
+The container is bound to loopback. nginx on the host terminates TLS and is the
+only thing that can reach it; port 8000 was already taken by another service on
+the same box, hence 8010.
+
+## Files
+
+| File | What it is |
+|---|---|
+| `Dockerfile` | CPU-only image. torch comes from the PyTorch CPU index in its own layer, since it is ~800 MB and changes far less often than the app |
+| `docker-entrypoint.sh` | Seeds `profiles.json` into the data volume on first boot |
+| `docker-compose.yml` | What runs on the box. CI copies this over on every deploy, so edit it here |
+| `.github/workflows/deploy.yml` | Build, push, deploy |
+| `deploy/remote-deploy.sh` | The half that runs on the box: login, pull, `up -d`, prune |
+| `deploy/wait-healthy.sh` | Post-deploy check; the container answers on loopback, so it has to run there |
+| `deploy/prewarm-model.sh` | Pulls the 2.3 GB reranker into the cache volume. Run once |
+| `deploy/nginx-media-monitoring.conf` | A copy of the live nginx site, certbot's edits included |
+
+## Volumes
+
+Four, all named, all surviving redeploys:
+
+| Volume | Holds | Why it cannot live in the image |
+|---|---|---|
+| `runs` | Every past run | The whole point of the run list |
+| `data` | `profiles.json` | Edited from the UI |
+| `page-cache` | Scraped pages | Makes a re-run of the same window free |
+| `hf-cache` | Reranker weights, ~2.3 GB | Too large to bake; downloaded once |
+
+`profiles.json` is both checked into the repo and mounted from a volume. The
+image copy is a seed: the entrypoint installs it the first time only, so a
+redeploy never overwrites profiles edited in the UI. To push a repo-side change
+to the live set, delete the volume copy and restart.
+
+## Environment
+
+`.env` on the box holds `GEMINI_API_KEY` and `APP_PORT`. Everything else has a
+working default; see `.env.example`.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `GEMINI_API_KEY` | — | Required for the report step |
+| `APP_PORT` | 8010 | Host port nginx proxies to |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | Set to `Alibaba-NLP/gte-multilingual-reranker-base` on a memory-tight host |
+| `RERANKER_BATCH_SIZE` | 8 | Drop to 4 if the host swaps |
+| `RUNS_DIR`, `PROFILES_PATH`, `PAGE_CACHE_DIR` | repo-relative | Set by the image to the volume paths |
+| `HOST`, `PORT` | `127.0.0.1:8000` | The image sets `HOST=0.0.0.0`; a bare `python3 server.py` still binds loopback |
+
+## Memory
+
+This is the tight part. The fp32 cross-encoder is 568M parameters — roughly
+2.3 GB of weights plus a batch's activations, on a box with 3.7 GB shared with
+Grafana, Prometheus and another service. The container is capped at 3 GB of RAM
+with swap beyond it, so a heavy run degrades into swap rather than triggering
+the OOM killer on a neighbour.
+
+If runs crawl, the escape hatch is `RERANKER_MODEL`: the gte reranker is 306M
+parameters, about twice as fast, at some cost to Marathi ranking quality.
+Dropping `RERANKER_BATCH_SIZE` to 4 trades a little throughput for a lower peak.
+
+## SSE through nginx
+
+Run progress is Server-Sent Events, and the default proxy settings break them
+in two ways: `proxy_buffering` holds events until the response ends, which for
+a run means until it finishes, and the 60s read timeout kills a connection that
+sits quiet inside the cross-encoder. The `/api/jobs/` location turns buffering
+off and raises the timeout to an hour. The app also sends `X-Accel-Buffering:
+no`, which covers the same ground; both are here because the header is easy to
+lose in a refactor.
+
+## First-time setup
+
+On the box:
+
+    mkdir -p ~/media_monitoring
+    # .env with GEMINI_API_KEY and APP_PORT=8010
+    # docker-compose.yml and deploy/*.sh arrive with the first deploy
+
+In the repo settings, four secrets:
+
+| Secret | Value |
+|---|---|
+| `EC2_HOST` | the instance hostname |
+| `EC2_USER` | `ubuntu` |
+| `EC2_SSH_KEY` | the private key, whole file including header and footer |
+
+`GITHUB_TOKEN` is not one of them — Actions provides it, and the deploy uses it
+to log the box into GHCR for the length of the run and logs out afterwards. No
+long-lived registry credential sits on the instance.
+
+nginx and the certificate are already in place. To rebuild them from scratch:
+
+    sudo cp deploy/nginx-media-monitoring.conf /etc/nginx/sites-available/media-monitoring
+    sudo ln -s /etc/nginx/sites-available/media-monitoring /etc/nginx/sites-enabled/
+    sudo htpasswd -c /etc/nginx/.htpasswd.media-monitoring <user>
+    sudo nginx -t && sudo systemctl reload nginx
+    sudo certbot --nginx -d media-monitoring.duckdns.org --redirect
+
+The certbot renewal timer is already installed. The ACME challenge location is
+exempted from basic auth explicitly — without that, renewal fails ninety days
+later with nobody watching.
+
+## Operating it
+
+    docker compose logs -f media-monitoring     # tail
+    docker compose ps                           # what is running
+    cat ~/media_monitoring/DEPLOYED             # which commit that is
+    docker stats media-monitoring               # memory, during a run
+
+Rolling back is a pinned pull, since every commit is tagged:
+
+    IMAGE=ghcr.io/<owner>/media_monitoring:<sha> docker compose up -d
 
 ## Notes
 

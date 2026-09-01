@@ -1,0 +1,91 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+    # A docs-only push does not need a 15-minute torch build.
+    paths-ignore:
+      - '**.md'
+      - 'news_monitor.ipynb'
+  workflow_dispatch:
+
+# A second push while a deploy is mid-flight should replace it, not race it
+# onto the same box.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve the image name
+        id: name
+        # GHCR rejects uppercase; the owner or repo may carry it.
+        run: echo "image=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.name.outputs.image }}:latest
+            ${{ steps.name.outputs.image }}:${{ github.sha }}
+          # The torch layer is ~800 MB and identical between builds; without a
+          # cache every push re-downloads and re-pushes it.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to EC2
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load the SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Ship the compose file and scripts
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" 'mkdir -p ~/media_monitoring'
+          scp -i ~/.ssh/deploy_key docker-compose.yml deploy/remote-deploy.sh deploy/wait-healthy.sh deploy/prewarm-model.sh \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/media_monitoring/"
+
+      - name: Pull and restart
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "GHCR_TOKEN='${{ secrets.GITHUB_TOKEN }}' ACTOR='${{ github.actor }}' IMAGE='${{ needs.build.outputs.image }}:${{ github.sha }}' bash ~/media_monitoring/remote-deploy.sh"
+
+      - name: Wait for it to answer
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            'bash ~/media_monitoring/wait-healthy.sh'

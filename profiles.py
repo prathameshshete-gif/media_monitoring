@@ -26,11 +26,14 @@ Search-term rules, learned the hard way (see README):
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
 
-STORE = Path("profiles.json")
+# In the container this points into the data volume, seeded from the copy
+# baked into the image, so UI edits survive a redeploy.
+STORE = Path(os.getenv("PROFILES_PATH", "profiles.json"))
 
 
 def _slug(name: str) -> str:

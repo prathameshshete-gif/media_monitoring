@@ -15,7 +15,6 @@ import queue
 import threading
 import traceback
 from datetime import datetime
-from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -194,7 +193,7 @@ def api_default_prompt():
 @app.get("/api/runs/{run_id}/report.md")
 def api_report_file(run_id: str):
     """The report as a downloadable file, named after the run."""
-    p = Path("runs") / run_id / "report.md"
+    p = store.RUNS / run_id / "report.md"
     if not p.exists():
         raise HTTPException(404, "No report for this run")
     return FileResponse(p, media_type="text/markdown; charset=utf-8",
@@ -244,6 +243,11 @@ def api_status():
 
 
 if __name__ == "__main__":
+    import os
+
     import uvicorn
-    Path("runs").mkdir(exist_ok=True)
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+    store.RUNS.mkdir(parents=True, exist_ok=True)
+    # 0.0.0.0 in the container, where nginx on the host is the only thing that
+    # can reach the published port; 127.0.0.1 when run straight from a shell.
+    uvicorn.run(app, host=os.getenv("HOST", "127.0.0.1"),
+                port=int(os.getenv("PORT", "8000")), log_level="warning")

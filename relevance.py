@@ -17,10 +17,16 @@ here -- they score Devanagari text essentially at random.
 
 from __future__ import annotations
 
+import os
+
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-DEFAULT_MODEL = "BAAI/bge-reranker-v2-m3"
+# Set RERANKER_MODEL to the gte alternative above on a memory-tight box:
+# 306M params against 568M, roughly twice as fast, some quality loss.
+DEFAULT_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+# Peak memory scales with the batch; drop it to 4 when the host swaps.
+DEFAULT_BATCH_SIZE = int(os.getenv("RERANKER_BATCH_SIZE", "8"))
 
 
 class Reranker:
@@ -33,7 +39,8 @@ class Reranker:
         self.model.to(self.device).eval()
 
     @torch.inference_mode()
-    def score(self, query: str, docs: list[str], batch_size: int = 8,
+    def score(self, query: str, docs: list[str],
+              batch_size: int = DEFAULT_BATCH_SIZE,
               verbose: bool = False) -> list[float]:
         """Relevance logits, one per doc. Higher is more relevant."""
         out: list[float] = []

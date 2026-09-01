@@ -14,10 +14,13 @@ spreadsheet names.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
-RUNS = Path("runs")
+# Overridable so the container can point it at a mounted volume; runs are
+# the one thing that must outlive the image.
+RUNS = Path(os.getenv("RUNS_DIR", "runs"))
 
 
 def new_run_id() -> str:

@@ -1,0 +1,45 @@
+# Deployed copy lives at ~/media_monitoring/docker-compose.yml on the EC2 box;
+# CI scp's this file over on every deploy, so edit it here, not there.
+services:
+  media-monitoring:
+    image: ${IMAGE:-ghcr.io/prathameshshete-gif/media_monitoring:latest}
+    container_name: media-monitoring
+    restart: unless-stopped
+
+    # Bound to loopback on purpose: nginx on the host terminates TLS and is the
+    # only thing that should reach this. 8000 is taken by ai-calling-agent.
+    ports:
+      - "127.0.0.1:${APP_PORT:-8010}:8000"
+
+    env_file:
+      - .env
+
+    environment:
+      # 2 vCPU. Letting torch spawn more threads than cores only adds
+      # contention with nginx and the other containers on this box.
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+
+    volumes:
+      - runs:/app/runs                # pipeline output, browsable from the UI
+      - data:/app/data                # profiles.json, edited from the UI
+      - page-cache:/app/page-cache    # scraped pages; makes re-runs free
+      - hf-cache:/app/hf-cache        # ~2.3 GB of reranker weights
+
+    # The box has 3.7 GB of RAM shared with Grafana, Prometheus and the calling
+    # agent. Capping RAM at 3 GB with swap beyond it means a heavy run degrades
+    # into swap instead of taking the other services down with it.
+    mem_limit: 3g
+    memswap_limit: 6g
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  runs:
+  data:
+  page-cache:
+  hf-cache:

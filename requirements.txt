@@ -1,0 +1,27 @@
+# Runtime dependencies. torch is NOT here on purpose: the Dockerfile installs
+# the CPU-only wheel from download.pytorch.org first, because the PyPI wheel
+# drags in ~2.5 GB of CUDA libraries that are dead weight on a t3 instance.
+
+# Discovery and extraction
+requests==2.33.1
+beautifulsoup4==4.14.3
+lxml==6.0.2
+Protego==0.6.2
+
+# Tabular output
+pandas==2.3.3
+openpyxl==3.1.5
+
+# Relevance scoring (torch comes from the CPU index, see Dockerfile)
+transformers==5.14.1
+sentencepiece==0.2.1
+
+# Report generation
+langchain-core==1.4.8
+langchain-google-genai==4.2.6
+python-dotenv==1.2.2
+
+# Web frontend
+fastapi==0.136.1
+uvicorn[standard]==0.48.0
+pydantic==2.13.4

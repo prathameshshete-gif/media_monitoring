@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import os
 import random
 import re
 import time
@@ -29,7 +30,7 @@ from protego import Protego
 from bs4 import BeautifulSoup
 
 IST = timezone(timedelta(hours=5, minutes=30))
-CACHE_DIR = Path(".cache/pages")
+CACHE_DIR = Path(os.getenv("PAGE_CACHE_DIR", ".cache/pages"))
 
 # The "Mozilla/5.0 (compatible; ...)" shape is the conventional bot string, and
 # some publishers' WAFs (Tarun Bharat's, for one) 403 anything without it. The

@@ -1,0 +1,28 @@
+.git
+.github
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Regenerates itself; hundreds of MB that must not enter the build context.
+.cache/
+runs/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+*.ipynb
+
+# Local pipeline output
+corpus.txt
+corpus.jsonl
+*.xlsx
+report_llm.md
+*.log
+
+# Docs and deploy scaffolding are not needed at runtime
+README.md
+deploy/
+docker-compose.yml
