@@ -512,15 +512,18 @@ working default; see `.env.example`.
 
 ## Memory
 
-This is the tight part. The fp32 cross-encoder is 568M parameters — roughly
-2.3 GB of weights plus a batch's activations, on a box with 3.7 GB shared with
-Grafana, Prometheus and another service. The container is capped at 3 GB of RAM
-with swap beyond it, so a heavy run degrades into swap rather than triggering
-the OOM killer on a neighbour.
+The 568M-parameter cross-encoder was the thing expected to break this box,
+which has 3.7 GB shared with Grafana, Prometheus and another service. Measured
+on the instance, it is not close: the model loads in ~4s from the warm cache
+and the container sits at **694 MiB** with it resident and scoring — the
+safetensors weights are memory-mapped rather than read into a 2.3 GB fp32
+buffer. The 3 GB cap in `docker-compose.yml` stays as a guard rail, not because
+the ceiling is near.
 
-If runs crawl, the escape hatch is `RERANKER_MODEL`: the gte reranker is 306M
-parameters, about twice as fast, at some cost to Marathi ranking quality.
-Dropping `RERANKER_BATCH_SIZE` to 4 trades a little throughput for a lower peak.
+Throughput, not memory, is the real limit: ~3-4s per article on 2 vCPU, so a
+200-article window is a 10-minute run. If that is too slow, `RERANKER_MODEL`
+takes the gte reranker — 306M parameters, about twice as fast, at some cost to
+Marathi ranking quality. `RERANKER_BATCH_SIZE` is there for the same reason.
 
 ## SSE through nginx
 
