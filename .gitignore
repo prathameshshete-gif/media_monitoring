@@ -1,0 +1,41 @@
+# Secrets — GEMINI_API_KEY lives here. Never commit.
+.env
+.env.*
+!.env.example
+
+# Scraped page cache. Regenerates itself on the next run; hundreds of MB.
+.cache/
+
+# Pipeline output. Each run is a self-contained directory under runs/, and the
+# reports are downloadable from the UI, so none of it belongs in the repo.
+runs/
+corpus.txt
+corpus.jsonl
+articles.xlsx
+report_llm.md
+*.xlsx
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Model weights and HF cache, if a local cache dir ends up here
+.model_cache/
+models/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# profiles.json is intentionally NOT ignored: it holds the entities you monitor,
+# their search terms and their report briefs. That is configuration worth
+# keeping under version control.

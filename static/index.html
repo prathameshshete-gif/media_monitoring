@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media Monitor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%F0%9F%93%B0%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+Devanagari:wght@400;500&display=swap">
+<style>
+:root{
+  color-scheme:light;
+  --plane:#f7f8fa; --surface:#fff; --surface-2:#f2f4f8; --surface-3:#e9edf3;
+  --ink:#10151c; --ink-2:#4d5563; --muted:#838b99;
+  --rule:rgba(16,21,28,.11); --accent:#2a78d6; --accent-dim:rgba(42,120,214,.12);
+  --warn:#eb6834; --good:#0ca30c;
+  --shadow:0 1px 2px rgba(16,21,28,.05),0 4px 14px rgba(16,21,28,.04);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --plane:#0c0f13; --surface:#14181e; --surface-2:#1b212a; --surface-3:#252d38;
+  --ink:#f2f4f7; --ink-2:#a8b0bd; --muted:#7b838f;
+  --rule:rgba(255,255,255,.11); --accent:#3987e5; --accent-dim:rgba(57,135,229,.18);
+  --warn:#d95926; --good:#0ca30c;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 14px rgba(0,0,0,.3);
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);
+  font:15px/1.55 "IBM Plex Sans","Noto Sans Devanagari",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.app{display:grid;grid-template-columns:330px 1fr;min-height:100vh}
+@media (max-width:900px){.app{grid-template-columns:1fr}}
+
+/* ---------- sidebar ---------- */
+aside{background:var(--surface);border-right:1px solid var(--rule);
+  padding:22px 20px 40px;display:flex;flex-direction:column;gap:22px}
+.brand{font-weight:600;font-size:16px;letter-spacing:-.01em}
+.brand span{display:block;font-size:12px;color:var(--muted);font-weight:400;margin-top:2px}
+fieldset{border:1px solid var(--rule);border-radius:9px;padding:14px 14px 16px;margin:0}
+legend{font:500 10.5px/1 "IBM Plex Mono",monospace;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted);padding:0 6px}
+label{display:block;font-size:12.5px;color:var(--ink-2);margin:10px 0 4px}
+label:first-of-type{margin-top:0}
+input,textarea,select{width:100%;font:inherit;font-size:13.5px;padding:7px 9px;
+  border:1px solid var(--rule);border-radius:6px;background:var(--plane);color:var(--ink)}
+textarea{resize:vertical;min-height:82px;font-family:"IBM Plex Mono",monospace;font-size:12px}
+input:focus,textarea:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.check{display:flex;align-items:center;gap:8px;margin-top:11px;font-size:13px;color:var(--ink-2)}
+.check input{width:auto}
+button{font:inherit;font-size:14px;font-weight:500;padding:9px 14px;border-radius:7px;
+  border:1px solid transparent;background:var(--accent);color:#fff;cursor:pointer;
+  width:100%;transition:.14s}
+button:hover:not(:disabled){filter:brightness(1.08)}
+button:disabled{opacity:.5;cursor:not-allowed}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.runs{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto}
+.run{text-align:left;width:100%;background:var(--plane);border:1px solid var(--rule);
+  color:var(--ink);font-size:13px;padding:9px 11px;border-radius:7px;cursor:pointer}
+.run:hover{border-color:var(--accent)}
+.run[aria-current="true"]{background:var(--accent-dim);border-color:var(--accent)}
+.run b{display:block;font-weight:500;font-family:"IBM Plex Mono",monospace;font-size:12px}
+.run small{color:var(--muted);font-size:11.5px}
+
+/* ---------- main ---------- */
+main{padding:26px 30px 60px;min-width:0}
+h1{font-size:21px;margin:0 0 3px;letter-spacing:-.01em}
+.sub{color:var(--ink-2);font-size:13.5px;margin:0 0 20px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;
+  background:var(--rule);border:1px solid var(--rule);border-radius:9px;overflow:hidden;margin-bottom:20px}
+.stat{background:var(--surface);padding:13px 15px}
+.stat .k{font:500 10px/1 "IBM Plex Mono",monospace;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted)}
+.stat .v{font-size:23px;font-weight:600;margin-top:5px;font-variant-numeric:tabular-nums}
+.panel{background:var(--surface);border:1px solid var(--rule);border-radius:9px;
+  padding:18px 20px;box-shadow:var(--shadow);margin-bottom:18px}
+
+/* ---------- progress ---------- */
+.stages{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.pill{font:500 11px/1 "IBM Plex Mono",monospace;letter-spacing:.05em;text-transform:uppercase;
+  padding:5px 10px;border-radius:999px;background:var(--surface-2);color:var(--muted)}
+.pill.active{background:var(--accent);color:#fff}
+.pill.done{background:var(--accent-dim);color:var(--accent)}
+.pill.error{background:var(--warn);color:#fff}
+.log{font-family:"IBM Plex Mono",monospace;font-size:12px;line-height:1.7;
+  background:var(--surface-2);border-radius:7px;padding:11px 13px;max-height:190px;
+  overflow-y:auto;color:var(--ink-2)}
+.log div{white-space:pre-wrap}
+.log .t{color:var(--muted);margin-right:8px}
+.log .err{color:var(--warn)}
+
+/* ---------- tabs + filters ---------- */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--rule);margin-bottom:16px}
+.tab{background:none;border:none;width:auto;color:var(--ink-2);font-size:14px;
+  padding:8px 14px;border-radius:0;border-bottom:2px solid transparent;cursor:pointer}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:500}
+.filters{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:14px;
+  font-size:13px;color:var(--ink-2)}
+.filters select{width:auto;min-width:130px}
+.slider{display:flex;align-items:center;gap:9px}
+.slider input{width:130px;padding:0}
+.slider b{font-family:"IBM Plex Mono",monospace;font-size:12.5px;font-weight:500;
+  min-width:38px;color:var(--ink)}
+
+/* ---------- table ---------- */
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;font:500 10px/1 "IBM Plex Mono",monospace;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted);padding:0 12px 9px 0;
+  border-bottom:1px solid var(--rule);white-space:nowrap}
+td{padding:11px 12px 11px 0;border-bottom:1px solid var(--rule);vertical-align:top}
+tbody tr:hover{background:var(--surface-2)}
+.when{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted);
+  white-space:nowrap;font-variant-numeric:tabular-nums}
+.src{font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+.hl a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--rule)}
+.hl a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+.rel{display:flex;align-items:center;gap:7px;font-family:"IBM Plex Mono",monospace;
+  font-size:12px;font-variant-numeric:tabular-nums}
+.bar{width:44px;height:5px;border-radius:3px;background:var(--surface-3);overflow:hidden;flex:none}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.tag{font:500 10px/1 "IBM Plex Mono",monospace;letter-spacing:.04em;text-transform:uppercase;
+  padding:3px 7px;border-radius:4px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
+.tag.partial{background:rgba(235,104,52,.14);color:var(--warn)}
+.empty{padding:34px 0;text-align:center;color:var(--muted);font-size:14px}
+.report{font:15px/1.85 "Noto Sans Devanagari","IBM Plex Sans",system-ui,sans-serif;
+  max-width:80ch;color:var(--ink)}
+.report h2{font-size:19px;font-weight:600;margin:34px 0 10px;padding-bottom:7px;
+  border-bottom:1px solid var(--rule);letter-spacing:-.01em}
+.report h2:first-child{margin-top:0}
+.report h3{font-size:16px;font-weight:600;margin:22px 0 7px;color:var(--ink)}
+.report h4,.report h5{font-size:14.5px;font-weight:600;margin:16px 0 5px;color:var(--ink-2)}
+.report p{margin:0 0 13px}
+.report ul,.report ol{margin:0 0 14px;padding-left:22px}
+.report li{margin:0 0 7px}
+.report strong{font-weight:600}
+.report code{font:12.5px/1.5 "IBM Plex Mono",monospace;background:var(--surface-2);
+  padding:1px 5px;border-radius:4px}
+.tablewrap{overflow-x:auto;margin:0 0 18px}
+table.md{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.6}
+table.md th,table.md td{border:1px solid var(--rule);padding:8px 11px;
+  text-align:left;vertical-align:top}
+table.md th{background:var(--surface-2);font-weight:600;white-space:nowrap}
+table.md tbody tr:nth-child(even){background:var(--surface-2)}
+.reportbar{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin:0 0 18px;
+  padding-bottom:14px;border-bottom:1px solid var(--rule)}
+.reportbar .grow{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.dl{flex:0 0 auto;width:auto;font:500 12px/1 "IBM Plex Sans",system-ui,sans-serif;color:var(--ink-2);
+  background:var(--surface-2);border:1px solid var(--rule);border-radius:7px;
+  padding:8px 13px;cursor:pointer;transition:background .15s,color .15s}
+.dl:hover{background:var(--surface-3);color:var(--ink)}
+.dl.primary{background:var(--accent);border-color:transparent;color:#fff}
+.dl.primary:hover{background:var(--accent);opacity:.9;color:#fff}
+@media print{
+  aside,.tabs,.reportbar,.log,.stages,#articlesView,.stats,header{display:none!important}
+  .app{display:block}
+  body{background:#fff;color:#000}
+  .panel{border:0;box-shadow:none;padding:0}
+  .report{max-width:none;font-size:11.5pt;line-height:1.7}
+  .report h2{page-break-after:avoid}
+  table.md{page-break-inside:auto}
+  table.md tr{page-break-inside:avoid}
+}
+.mainhead{display:flex;align-items:flex-start;gap:14px}
+.mainhead .grow{flex:1 1 auto;min-width:0}
+dialog#settings{border:1px solid var(--rule);border-radius:12px;padding:0;
+  background:var(--surface);color:var(--ink);width:min(860px,92vw);
+  box-shadow:0 18px 50px rgba(0,0,0,.28)}
+dialog#settings::backdrop{background:rgba(10,14,20,.55)}
+dialog#settings form{padding:22px 24px 20px;display:flex;flex-direction:column}
+.dlghead{display:flex;align-items:flex-start;gap:14px;margin-bottom:16px}
+.dlghead h2{margin:0;font-size:17px;letter-spacing:-.01em}
+.dlghead .sub{margin:3px 0 0;font-size:12.5px;color:var(--muted)}
+.dlghead .dl{margin-left:auto;padding:6px 11px}
+dialog#settings textarea{min-height:46vh;font:12.5px/1.65 "IBM Plex Mono",
+  "Noto Sans Devanagari",monospace;resize:vertical;white-space:pre-wrap}
+.dlgnote{font-size:11.5px;color:var(--muted);margin-top:9px;min-height:16px}
+.dlgfoot{display:flex;align-items:center;gap:9px;margin-top:16px;
+  padding-top:15px;border-top:1px solid var(--rule)}
+.dlgfoot .grow{flex:1}
+.pbtns{display:flex;gap:6px;margin-top:8px}
+.mini{flex:1 1 0;width:auto;font-size:12px;font-weight:500;padding:7px 8px;
+  background:var(--surface-2);color:var(--ink-2);border:1px solid var(--rule);
+  border-radius:6px}
+.mini:hover:not(:disabled){background:var(--surface-3);color:var(--ink);filter:none}
+.mini.danger:hover:not(:disabled){background:rgba(235,104,52,.14);color:var(--warn);
+  border-color:rgba(235,104,52,.3)}
+.hint{font-size:11.5px;line-height:1.5;color:var(--muted);margin-top:9px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+
+<aside>
+  <div class="brand">Media Monitor<span>sitemap → text → rank → report</span></div>
+
+  <fieldset>
+    <legend>Profiles</legend>
+    <select id="profileSel"><option value="">— select an entity —</option></select>
+    <div class="pbtns">
+      <button class="mini" id="pNew">New</button>
+      <button class="mini" id="pSave">Save</button>
+      <button class="mini danger" id="pDel">Delete</button>
+    </div>
+    <div class="hint" id="pHint">Pick an entity to load its subject, search terms and report brief.</div>
+  </fieldset>
+
+  <fieldset>
+    <legend>New run</legend>
+    <label for="subject">Subject</label>
+    <input id="subject" value="Devendra Fadnavis, Chief Minister of Maharashtra">
+
+    <label for="terms">Search terms (one per line)</label>
+    <textarea id="terms">Devendra Fadnavis
+Fadnavis
+देवेंद्र फडणवीस
+फडणवीस</textarea>
+
+    <div class="row">
+      <div><label for="start">From</label><input id="start" type="date"></div>
+      <div><label for="end">To</label><input id="end" type="date"></div>
+    </div>
+
+    <label for="minrel">Relevance floor — <span id="minrelv">0.02</span></label>
+    <input id="minrel" type="range" min="0" max="0.6" step="0.01" value="0.02">
+
+    <div class="check"><input type="checkbox" id="deep"><label for="deep" style="margin:0">Body matching (slow, low yield)</label></div>
+    <div class="check"><input type="checkbox" id="report"><label for="report" style="margin:0">Write report (needs GEMINI_API_KEY)</label></div>
+
+    <div style="margin-top:14px"><button id="go">Run pipeline</button></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Past runs</legend>
+    <div class="runs" id="runs"><div class="empty" style="padding:14px 0">No runs yet</div></div>
+  </fieldset>
+</aside>
+
+<main>
+  <div class="mainhead">
+    <div class="grow">
+      <h1 id="title">No run selected</h1>
+      <p class="sub" id="subtitle">Start a run, or pick one from the sidebar.</p>
+    </div>
+    <button class="dl" id="openSettings" title="System prompt for the selected entity">⚙ System prompt</button>
+  </div>
+
+  <div class="panel" id="progress" hidden>
+    <div class="stages" id="stages"></div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <div class="stats" id="stats" hidden></div>
+
+  <div class="panel" id="results" hidden>
+    <div class="tabs">
+      <button class="tab" id="tabArticles" aria-selected="true">Articles</button>
+      <button class="tab" id="tabReport" aria-selected="false">Report</button>
+    </div>
+
+    <div id="articlesView">
+      <div class="filters">
+        <span class="slider">Relevance ≥ <input id="relFilter" type="range" min="0" max="1" step="0.01" value="0"><b id="relFilterV">0.00</b></span>
+        <label style="margin:0">Source
+          <select id="srcFilter"><option value="">all</option></select>
+        </label>
+        <span id="count" style="color:var(--muted)"></span>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Relevance</th><th>Published</th><th>Source</th><th>Headline</th><th>Words</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="noRows" hidden>Nothing above this relevance floor.</div>
+    </div>
+
+    <div id="reportView" hidden>
+      <div class="reportbar" id="reportBar" hidden>
+        <span class="grow" id="reportMeta" style="color:var(--muted);font-size:12.5px"></span>
+        <button class="dl" id="dlMd">Download .md</button>
+        <button class="dl" id="dlHtml">Download .html</button>
+        <button class="dl primary" id="dlPdf">Save as PDF</button>
+      </div>
+      <div class="report" id="reportBody"></div>
+    </div>
+  </div>
+</main>
+</div>
+
+<dialog id="settings">
+  <form method="dialog" id="settingsForm">
+    <div class="dlghead">
+      <div>
+        <h2>Report brief</h2>
+        <p class="sub" id="settingsFor">—</p>
+      </div>
+      <button class="dl" value="cancel" id="dlgX" title="Close">✕</button>
+    </div>
+
+    <label for="sysPrompt">System prompt sent to Gemini for this entity</label>
+    <textarea id="sysPrompt" spellcheck="false"></textarea>
+    <div class="dlgnote" id="dlgNote"></div>
+
+    <div class="dlgfoot">
+      <button class="dl" id="dlgReset" type="button">Reset to default</button>
+      <span class="grow"></span>
+      <button class="dl" value="cancel" type="submit">Cancel</button>
+      <button class="dl primary" id="dlgSave" type="button">Save brief</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const STAGES = ["discover","extract","dedupe","rank","report"];
+let current = null, articles = [];
+
+// defaults: yesterday → today
+const d = new Date(), pad = n => String(n).padStart(2,"0");
+const iso = x => `${x.getFullYear()}-${pad(x.getMonth()+1)}-${pad(x.getDate())}`;
+$("end").value = iso(d);
+$("start").value = iso(new Date(d.getTime() - 86400000));
+
+$("minrel").oninput = e => $("minrelv").textContent = (+e.target.value).toFixed(2);
+$("relFilter").oninput = e => { $("relFilterV").textContent = (+e.target.value).toFixed(2); draw(); };
+$("srcFilter").onchange = draw;
+
+$("tabArticles").onclick = () => showTab("articles");
+$("tabReport").onclick = () => showTab("report");
+function showTab(which){
+  const a = which === "articles";
+  $("tabArticles").setAttribute("aria-selected", a);
+  $("tabReport").setAttribute("aria-selected", !a);
+  $("articlesView").hidden = !a;
+  $("reportView").hidden = a;
+}
+
+// ---------- runs list ----------
+async function loadRuns(){
+  const runs = await (await fetch("/api/runs")).json();
+  const el = $("runs");
+  if(!runs.length){ el.innerHTML = '<div class="empty" style="padding:14px 0">No runs yet</div>'; return; }
+  el.innerHTML = runs.map(r => `
+    <button class="run" data-id="${r.id}" aria-current="${r.id===current}">
+      <b>${r.id.replace("T"," ").replace(/(\d{2})(\d{2})(\d{2})$/,"$1:$2")}</b>
+      <small>${r.window || ""} · ${r.ranked ?? "—"} kept${r.has_report ? " · report" : ""}</small>
+    </button>`).join("");
+  el.querySelectorAll(".run").forEach(b => b.onclick = () => loadRun(b.dataset.id));
+}
+
+// Escape first, then apply markdown, so nothing in the model's output can
+// inject markup. Covers what the report prompt actually asks for: headings,
+// bold, italics, bullets, and paragraphs.
+function mdToHtml(md){
+  const esc = md.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const inline = t => t
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  const out = [];
+  let list = null;
+  const lines = esc.split("\n");
+  const isRow = t => /^\s*\|.*\|\s*$/.test(t);
+  const cells = t => t.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+  for(let i = 0; i < lines.length; i++){
+    const raw = lines[i];
+    const line = raw.trimEnd();
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    const li = line.match(/^\s*(?:[-*+]|\d+\.)\s+(.*)$/);
+    // A pipe row followed by a |---|---| divider starts a table.
+    if(isRow(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i+1])){
+      if(list){ out.push(`</${list}>`); list = null; }
+      const head = cells(line);
+      i += 2;
+      const body = [];
+      while(i < lines.length && isRow(lines[i])){ body.push(cells(lines[i])); i++; }
+      i--;
+      out.push('<div class="tablewrap"><table class="md">');
+      out.push("<thead><tr>" + head.map(c => `<th>${inline(c)}</th>`).join("") + "</tr></thead>");
+      out.push("<tbody>" + body.map(r =>
+        "<tr>" + r.map(c => `<td>${inline(c)}</td>`).join("") + "</tr>").join("") + "</tbody>");
+      out.push("</table></div>");
+      continue;
+    }
+    if(h){
+      if(list){ out.push(`</${list}>`); list = null; }
+      // '#' is clamped to h2 so a report heading never competes with the
+      // page h1; deeper levels map straight through to the .report CSS tiers.
+      const lvl = Math.min(Math.max(h[1].length, 2), 5);
+      out.push(`<h${lvl}>${inline(h[2])}</h${lvl}>`);
+    } else if(li){
+      const tag = /^\s*\d/.test(line) ? "ol" : "ul";
+      if(list && list !== tag){ out.push(`</${list}>`); list = null; }
+      if(!list){ out.push(`<${tag}>`); list = tag; }
+      out.push(`<li>${inline(li[1])}</li>`);
+    } else if(!line){
+      if(list){ out.push(`</${list}>`); list = null; }
+    } else {
+      if(list){ out.push(`</${list}>`); list = null; }
+      out.push(`<p>${inline(line)}</p>`);
+    }
+  }
+  if(list) out.push(`</${list}>`);
+  return out.join("");
+}
+
+let currentReport = "";
+
+// Standalone document for .html download and for Save-as-PDF. Self-contained:
+// the styles are inlined so the file survives being emailed or archived.
+function standaloneHtml(md, title, subtitle){
+  return `<!doctype html>
+<html lang="mr"><head><meta charset="utf-8">
+<title>${title}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  body{margin:0;padding:48px 56px;background:#fff;color:#14181e;
+    font:15px/1.85 "Noto Sans Devanagari","IBM Plex Sans",system-ui,sans-serif;
+    max-width:900px}
+  .head{border-bottom:2px solid #14181e;padding-bottom:14px;margin-bottom:30px}
+  .head h1{font-size:22px;margin:0 0 5px;letter-spacing:-.01em}
+  .head .sub{font-size:12.5px;color:#6b7280}
+  h2{font-size:19px;font-weight:600;margin:34px 0 10px;padding-bottom:7px;
+    border-bottom:1px solid #e3e7ee}
+  h3{font-size:16px;font-weight:600;margin:22px 0 7px}
+  h4,h5{font-size:14.5px;font-weight:600;margin:16px 0 5px;color:#4d5563}
+  p{margin:0 0 13px} ul,ol{margin:0 0 14px;padding-left:22px} li{margin:0 0 7px}
+  code{font:12.5px/1.5 ui-monospace,monospace;background:#f2f4f8;padding:1px 5px;border-radius:4px}
+  .tablewrap{overflow-x:auto;margin:0 0 18px}
+  table.md{border-collapse:collapse;width:100%;font-size:13px;line-height:1.6}
+  table.md th,table.md td{border:1px solid #d9dee7;padding:8px 11px;text-align:left;vertical-align:top}
+  table.md th{background:#f2f4f8;font-weight:600}
+  table.md tbody tr:nth-child(even){background:#fafbfc}
+  @page{margin:18mm}
+  @media print{
+    body{padding:0;max-width:none;font-size:11.5pt}
+    h2{page-break-after:avoid} table.md tr{page-break-inside:avoid}
+  }
+</style></head>
+<body>
+<div class="head"><h1>${title}</h1><div class="sub">${subtitle}</div></div>
+${mdToHtml(md)}
+</body></html>`;
+}
+
+function saveBlob(name, text, type){
+  const url = URL.createObjectURL(new Blob([text], {type}));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function reportTitle(){
+  const t = $("title").textContent || "Media report";
+  return { title: `माध्यम अहवाल — ${t}`, sub: $("reportMeta").textContent || "" };
+}
+
+$("dlMd").onclick = () => {
+  // Served by the API so the file is named after the run and comes straight
+  // from what the pipeline wrote.
+  window.location.href = `/api/runs/${current}/report.md`;
+};
+
+$("dlHtml").onclick = () => {
+  const {title, sub} = reportTitle();
+  saveBlob(`media-report-${current}.html`,
+           standaloneHtml(currentReport, title, sub), "text/html;charset=utf-8");
+};
+
+$("dlPdf").onclick = () => {
+  const {title, sub} = reportTitle();
+  const w = window.open("", "_blank");
+  if(!w){ alert("Allow pop-ups for this page to save the report as PDF."); return; }
+  w.document.write(standaloneHtml(currentReport, title, sub));
+  w.document.close();
+  // Give the webfont a moment, or Devanagari prints in a fallback face.
+  w.onload = () => setTimeout(() => { w.focus(); w.print(); }, 600);
+};
+
+async function loadRun(id){
+  current = id;
+  const r = await fetch(`/api/runs/${id}`);
+  if(!r.ok) return;
+  const {meta, articles: arts, report} = await r.json();
+  articles = arts;
+  $("title").textContent = meta.subject || "Run";
+  $("subtitle").textContent =
+    `${meta.window || ""} · ${meta.status || ""}` +
+    (meta.finished ? ` · finished ${meta.finished.replace("T"," ")}` : "");
+
+  $("stats").hidden = false;
+  $("stats").innerHTML = [
+    ["Matched", meta.matched], ["Extracted", meta.extracted],
+    ["Duplicates", meta.duplicates], ["Above floor", meta.ranked],
+  ].map(([k,v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v ?? "—"}</div></div>`).join("");
+
+  const srcs = [...new Set(articles.map(a => a.source))].sort();
+  $("srcFilter").innerHTML = '<option value="">all</option>' +
+    srcs.map(s => `<option>${s}</option>`).join("");
+
+  const floor = meta.min_relevance ?? 0;
+  $("relFilter").value = floor;
+  $("relFilterV").textContent = (+floor).toFixed(2);
+
+  currentReport = report || "";
+  $("reportBody").innerHTML = report ? mdToHtml(report) : "No report generated for this run.";
+  $("reportBar").hidden = !report;
+  $("reportMeta").textContent = report
+    ? `${meta.window || ""} · ${report.length.toLocaleString()} characters`
+    : "";
+  $("results").hidden = false;
+  draw();
+  loadRuns();
+}
+
+function draw(){
+  const floor = +$("relFilter").value, src = $("srcFilter").value;
+  const rows = articles
+    .filter(a => a.relevance >= floor && (!src || a.source === src))
+    .sort((x,y) => y.relevance - x.relevance);
+  const hidden = articles.length - rows.length;
+  $("count").textContent = `${rows.length} shown` +
+    (hidden ? ` · ${hidden} below floor` : "");
+  $("noRows").hidden = rows.length > 0;
+  $("rows").innerHTML = rows.map(a => `
+    <tr>
+      <td><span class="rel"><span class="bar"><i style="width:${(a.relevance*100).toFixed(0)}%"></i></span>${a.relevance.toFixed(3)}</span></td>
+      <td class="when">${(a.published||"").slice(5,16)}</td>
+      <td class="src">${a.source}</td>
+      <td class="hl"><a href="${a.url}" target="_blank" rel="noopener">${a.title || "(untitled)"}</a></td>
+      <td><span class="tag ${a.partial ? "partial" : ""}">${a.partial ? "lede only" : a.words + "w"}</span></td>
+    </tr>`).join("");
+}
+
+// ---------- profiles ----------
+let profiles = [];
+let activeProfile = "";
+
+function fillProfileSelect(){
+  $("profileSel").innerHTML = '<option value="">— select an entity —</option>' +
+    profiles.map(p => `<option value="${p.id}"${p.id === activeProfile ? " selected" : ""}>${p.name}</option>`).join("");
+}
+
+function applyProfile(p){
+  $("subject").value = p.subject || p.name;
+  $("terms").value = (p.terms || []).join("\n");
+  $("pHint").textContent =
+    `${p.name} — ${(p.terms || []).length} search terms · ` +
+    `${(p.system_prompt || "").length.toLocaleString()}-char brief`;
+}
+
+function currentProfile(){
+  return profiles.find(x => x.id === activeProfile) || null;
+}
+
+async function loadProfiles(select){
+  profiles = await (await fetch("/api/profiles")).json();
+  if(select !== undefined) activeProfile = select;
+  fillProfileSelect();
+}
+
+$("profileSel").onchange = () => {
+  activeProfile = $("profileSel").value;
+  const p = profiles.find(x => x.id === activeProfile);
+  if(p) applyProfile(p);
+  else $("pHint").textContent = "Pick an entity to load its subject, search terms and report brief.";
+};
+
+$("pNew").onclick = () => {
+  const name = prompt("Name of the person or entity to monitor:");
+  if(!name || !name.trim()) return;
+  activeProfile = "";
+  pendingBrief = null;          // a new profile starts from the stock brief
+  $("subject").value = name.trim();
+  $("terms").value = name.trim();
+  $("pHint").textContent =
+    `New: ${name.trim()} — add search terms (English and Devanagari, one per line), then Save.`;
+  fillProfileSelect();
+  $("terms").focus();
+};
+
+$("pSave").onclick = async () => {
+  const terms = $("terms").value.split("\n").map(s => s.trim()).filter(Boolean);
+  if(!terms.length){ $("pHint").textContent = "Add at least one search term first."; return; }
+  const existing = currentProfile();
+  const name = existing ? existing.name
+                        : ($("subject").value.split(",")[0].trim() || "Untitled");
+  // The brief belongs to the profile, not to this form. Keep whatever it
+  // already has; a new profile gets the stock one to edit from.
+  const brief = existing ? existing.system_prompt
+                         : (pendingBrief ?? await defaultBrief());
+  const res = await fetch("/api/profiles", {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({id: activeProfile || null, name,
+                          subject: $("subject").value.trim(), terms,
+                          system_prompt: brief})});
+  if(!res.ok){ $("pHint").textContent = (await res.json()).detail || "Save failed."; return; }
+  const saved = await res.json();
+  await loadProfiles(saved.id);
+  $("pHint").textContent = `Saved ${saved.name} — ${saved.terms.length} terms.`;
+};
+
+$("pDel").onclick = async () => {
+  const p = profiles.find(x => x.id === activeProfile);
+  if(!p){ $("pHint").textContent = "Select a profile to delete."; return; }
+  if(!confirm(`Delete the profile for ${p.name}? Past runs are not affected.`)) return;
+  await fetch(`/api/profiles/${p.id}`, {method:"DELETE"});
+  await loadProfiles("");
+  $("pHint").textContent = `Deleted ${p.name}.`;
+};
+
+// ---------- settings dialog: the brief for the selected entity ----------
+let pendingBrief = null;      // brief for a profile that isn't saved yet
+let defaultBriefCache = null;
+
+async function defaultBrief(){
+  if(defaultBriefCache === null){
+    const r = await fetch("/api/default-prompt");
+    defaultBriefCache = (await r.json()).system_prompt;
+  }
+  return defaultBriefCache;
+}
+
+function dlgNote(msg){ $("dlgNote").textContent = msg || ""; }
+
+$("openSettings").onclick = async () => {
+  const p = currentProfile();
+  $("settingsFor").textContent = p
+    ? `${p.name} — this brief is sent verbatim as the system prompt`
+    : "Unsaved profile — the brief is stored when you Save it in the sidebar";
+  $("sysPrompt").value = p ? p.system_prompt : (pendingBrief ?? await defaultBrief());
+  dlgNote("");
+  $("settings").showModal();
+  // Focusing a filled textarea drops the caret at the end and scrolls there;
+  // start at the top so the brief reads from its first line.
+  $("sysPrompt").focus();
+  $("sysPrompt").setSelectionRange(0, 0);
+  $("sysPrompt").scrollTop = 0;
+};
+
+$("dlgReset").onclick = async () => {
+  $("sysPrompt").value = await defaultBrief();
+  dlgNote("Stock Marathi brief loaded. Not saved yet.");
+};
+
+$("dlgSave").onclick = async () => {
+  const brief = $("sysPrompt").value.trim();
+  if(!brief){ dlgNote("The brief cannot be empty — use Reset to default."); return; }
+  const p = currentProfile();
+  if(!p){
+    // No saved profile yet: hold it until the profile itself is saved.
+    pendingBrief = brief;
+    $("settings").close();
+    $("pHint").textContent = "Brief set — press Save in the sidebar to store the profile.";
+    return;
+  }
+  const res = await fetch("/api/profiles", {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({...p, system_prompt: brief})});
+  if(!res.ok){ dlgNote((await res.json()).detail || "Save failed."); return; }
+  const saved = await res.json();
+  await loadProfiles(saved.id);
+  applyProfile(saved);
+  $("settings").close();
+  $("pHint").textContent =
+    `${saved.name} — brief updated (${saved.system_prompt.length.toLocaleString()} chars).`;
+};
+
+// ---------- start a run ----------
+$("go").onclick = async () => {
+  const body = {
+    subject: $("subject").value,
+    terms: $("terms").value.split("\n").map(s => s.trim()).filter(Boolean),
+    start: fmt($("start").value), end: fmt($("end").value),
+    min_relevance: +$("minrel").value,
+    deep: $("deep").checked, report: $("report").checked,
+    // Sent explicitly from the entity's stored brief — the server does not
+    // pick one for us.
+    system_prompt: (currentProfile()?.system_prompt) ?? pendingBrief
+                   ?? await defaultBrief(),
+  };
+  $("go").disabled = true;
+  $("progress").hidden = false;
+  $("log").innerHTML = ""; $("stages").innerHTML = "";
+  STAGES.forEach(s => $("stages").insertAdjacentHTML("beforeend",
+    `<span class="pill" data-s="${s}">${s}</span>`));
+
+  const res = await fetch("/api/run", {method:"POST",
+    headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  if(!res.ok){ log("error", (await res.json()).detail || "failed to start"); $("go").disabled = false; return; }
+  const {run_id} = await res.json();
+  current = run_id;
+
+  const es = new EventSource(`/api/jobs/${run_id}/events`);
+  es.onmessage = ev => {
+    const e = JSON.parse(ev.data);
+    log(e.stage, e.message, e.t);
+    const pill = document.querySelector(`.pill[data-s="${e.stage}"]`);
+    if(pill){ document.querySelectorAll(".pill.active").forEach(p => p.classList.replace("active","done")); pill.classList.add("active"); }
+    if(e.stage === "done"){ document.querySelectorAll(".pill.active").forEach(p => p.classList.replace("active","done"));
+      es.close(); $("go").disabled = false; loadRun(run_id); }
+    if(e.stage === "error"){ document.querySelectorAll(".pill").forEach(p => p.classList.remove("active"));
+      es.close(); $("go").disabled = false; }
+  };
+  es.onerror = () => { es.close(); $("go").disabled = false; };
+};
+
+const fmt = v => { const [y,m,dd] = v.split("-"); return `${m}/${dd}/${y}`; };
+function log(stage, msg, t){
+  $("log").insertAdjacentHTML("beforeend",
+    `<div><span class="t">${t || ""}</span><span class="${stage==="error"?"err":""}">${msg}</span></div>`);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+loadRuns();
+// Boot with the first profile applied, so the form is never in a stale state
+// that doesn't correspond to any saved entity.
+loadProfiles().then(() => {
+  if(profiles.length){
+    activeProfile = profiles[0].id;
+    fillProfileSelect();
+    applyProfile(profiles[0]);
+  }
+});
+</script>
+</body>
+</html>
