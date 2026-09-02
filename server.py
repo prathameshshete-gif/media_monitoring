@@ -10,13 +10,15 @@ the cross-encoder, so it cannot be a blocking request.
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import queue
 import threading
 import traceback
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -40,6 +42,9 @@ class RunRequest(BaseModel):
     deep: bool = False
     delay: float = 1.0
     report: bool = False
+    # Read from the nightly archive instead of scraping. Far faster, and the
+    # only way to reach a window whose sitemaps have long since rolled over.
+    use_archive: bool = False
     # The brief for this entity, sent explicitly by the caller. There is no
     # server-side default: an API caller that omits it and asks for a report
     # gets a clear failure on the report step rather than someone else's brief.
@@ -66,23 +71,46 @@ def _run_pipeline(job: dict, req: RunRequest) -> None:
         store.write_meta(run_id, status="running", subject=req.subject,
                          window=f"{req.start} – {req.end}",
                          started=datetime.now().isoformat(timespec="seconds"),
-                         min_relevance=req.min_relevance, deep=req.deep)
+                         min_relevance=req.min_relevance, deep=req.deep,
+                         source="archive" if req.use_archive else "live")
 
-        _emit(job, "discover", "Reading publisher sitemaps…")
-        df = nm.run(req.terms, req.start, req.end, deep=req.deep,
-                    delay=req.delay, verbose=False)
-        if df.empty:
-            _emit(job, "done", "No articles matched in this window.")
-            store.write_meta(run_id, status="empty", matched=0)
-            job["state"] = "done"
-            return
-        _emit(job, "discover", f"{len(df)} articles matched.", count=len(df))
+        if req.use_archive:
+            # Nothing is fetched: the text was stored the night it was
+            # published, so discovery and extraction collapse into one read.
+            import archive
+            from datetime import timedelta
+            start = datetime.strptime(req.start, "%m/%d/%Y").replace(tzinfo=nm.IST)
+            end = (datetime.strptime(req.end, "%m/%d/%Y").replace(tzinfo=nm.IST)
+                   + timedelta(days=1) - timedelta(seconds=1))
+            _emit(job, "discover", "Reading the archive…")
+            docs = archive.search(start, end, req.terms)
+            if not docs:
+                _emit(job, "done", "No archived articles matched this window.")
+                store.write_meta(run_id, status="empty", matched=0,
+                                 source="archive")
+                job["state"] = "done"
+                return
+            _emit(job, "extract", f"{len(docs)} archived articles matched.",
+                  count=len(docs))
+            matched = len(docs)
+        else:
+            _emit(job, "discover", "Reading publisher sitemaps…")
+            df = nm.run(req.terms, req.start, req.end, deep=req.deep,
+                        delay=req.delay, verbose=False)
+            if df.empty:
+                _emit(job, "done", "No articles matched in this window.")
+                store.write_meta(run_id, status="empty", matched=0)
+                job["state"] = "done"
+                return
+            _emit(job, "discover", f"{len(df)} articles matched.", count=len(df))
 
-        _emit(job, "extract", f"Fetching text for {len(df)} articles…")
-        fetcher = nm.Fetcher(user_agent=nm.__dict__.get("UA", "MediaMonitor/1.0"),
-                             delay=req.delay)
-        docs = corpus.build_docs(df, fetcher, verbose=False)
-        _emit(job, "extract", f"{len(docs)} articles with usable text.", count=len(docs))
+            _emit(job, "extract", f"Fetching text for {len(df)} articles…")
+            fetcher = nm.Fetcher(user_agent=nm.__dict__.get("UA", "MediaMonitor/1.0"),
+                                 delay=req.delay)
+            docs = corpus.build_docs(df, fetcher, verbose=False)
+            _emit(job, "extract", f"{len(docs)} articles with usable text.",
+                  count=len(docs))
+            matched = len(df)
 
         _emit(job, "dedupe", "Checking for near-duplicates…")
         docs, dropped = corpus.dedupe(docs, verbose=False)
@@ -101,7 +129,8 @@ def _run_pipeline(job: dict, req: RunRequest) -> None:
         text = corpus.write_corpus(kept, txt_path=str(d / "corpus.txt"),
                                    jsonl_path=str(d / "corpus.jsonl"),
                                    verbose=False)
-        store.write_meta(run_id, matched=len(df), extracted=len(docs),
+        store.write_meta(run_id, matched=matched, extracted=len(docs),
+                         source="archive" if req.use_archive else "live",
                          duplicates=len(dropped), ranked=len(kept),
                          corpus_chars=len(text))
 
@@ -198,6 +227,70 @@ def api_report_file(run_id: str):
         raise HTTPException(404, "No report for this run")
     return FileResponse(p, media_type="text/markdown; charset=utf-8",
                         filename=f"media-report-{run_id}.md")
+
+
+@app.get("/api/runs/{run_id}/articles.csv")
+def api_articles_csv(run_id: str, text: bool = False):
+    """The article table as a spreadsheet.
+
+    Written with a UTF-8 BOM. Without it Excel on Windows reads the file as
+    the local codepage and every Marathi headline arrives as mojibake, which
+    is the whole file useless for the people who actually read these.
+
+    `?text=1` adds the full article body. Left out by default: bodies run to
+    thousands of words and Excel handles a sheet of them badly.
+
+    The body lives in corpus.jsonl, which holds only the articles that cleared
+    the relevance floor, so articles below it come back with an empty text
+    cell rather than being dropped -- the point of the table is to show what a
+    run discarded as well as what it kept.
+    """
+    rows = store.read_articles(run_id)
+    if not rows:
+        raise HTTPException(404, "No articles for this run")
+
+    cols = ["source", "published", "title", "url", "relevance", "words", "lang"]
+    if text:
+        cols.append("text")
+        bodies = {}
+        cp = store.RUNS / run_id / "corpus.jsonl"
+        if cp.exists():
+            for line in cp.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    d = json.loads(line)
+                    bodies[d.get("url")] = d.get("text", "")
+        for r in rows:
+            r["text"] = bodies.get(r.get("url"), "")
+
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore",
+                       quoting=csv.QUOTE_ALL)
+    w.writeheader()
+    for r in rows:
+        row = dict(r)
+        if isinstance(row.get("relevance"), float):
+            row["relevance"] = f"{row['relevance']:.4f}"
+        w.writerow(row)
+
+    body = "\ufeff" + buf.getvalue()
+    return Response(content=body.encode("utf-8"),
+                    media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="articles-{run_id}.csv"'})
+
+
+@app.get("/api/runs/{run_id}/corpus.txt")
+def api_corpus_txt(run_id: str):
+    """The exact text that was sent to the model, as a download.
+
+    This is the source document behind the report: the numbered articles, in
+    the order the model saw them. Already on disk from the run itself.
+    """
+    p = store.RUNS / run_id / "corpus.txt"
+    if not p.exists():
+        raise HTTPException(404, "No corpus for this run")
+    return FileResponse(p, media_type="text/plain; charset=utf-8",
+                        filename=f"corpus-{run_id}.txt")
 
 
 @app.post("/api/run")

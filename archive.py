@@ -39,6 +39,10 @@ ARCHIVE_DIR = Path(os.getenv("ARCHIVE_DIR", "news_articles_for_media_monitoring"
 # for the status check rather than a success with zero articles.
 MIN_PLAUSIBLE_ARTICLES = 20
 
+# How often a source's file is rewritten mid-harvest. Small enough that a kill
+# loses little, large enough that rewriting the gzip is not the bottleneck.
+FLUSH_EVERY = 50
+
 
 def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -81,7 +85,39 @@ def write_source_day(day: datetime | str, source: str, records: list[dict]) -> P
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     tmp.replace(p)
+    _bump_count(day, source, len(records))
     return p
+
+
+def _counts_path(day: datetime | str) -> Path:
+    return day_dir(day) / "_counts.json"
+
+
+def _bump_count(day: datetime | str, source: str, n: int) -> None:
+    """Per-day article counts, written beside the data.
+
+    status() reads these rather than decompressing every file: a year of
+    archive is ~6,500 files and several GB, which is not an API response.
+    """
+    p = _counts_path(day)
+    counts = {}
+    if p.exists():
+        try:
+            counts = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            counts = {}
+    counts[_slug(source)] = n
+    p.write_text(json.dumps(counts, indent=1), encoding="utf-8")
+
+
+def day_count(day: datetime | str) -> int:
+    p = _counts_path(day)
+    if not p.exists():
+        return 0
+    try:
+        return sum(json.loads(p.read_text()).values())
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return 0
 
 
 def harvest_day(day: datetime, fetcher: nm.Fetcher | None = None,
@@ -143,6 +179,12 @@ def harvest_day(day: datetime, fetcher: nm.Fetcher | None = None,
                 "fetched": datetime.now().isoformat(timespec="seconds"),
             }
             new += 1
+            # Flush periodically. A full night is ~2.5 hours of fetching, and
+            # without this a kill part-way through a source throws away
+            # everything fetched for it -- which, for a day whose sitemap has
+            # since rolled over, means losing it for good.
+            if new % FLUSH_EVERY == 0:
+                write_source_day(start, source.name, list(existing.values()))
 
         if existing:
             write_source_day(start, source.name, list(existing.values()))
@@ -230,6 +272,7 @@ def status() -> dict:
     if ARCHIVE_DIR.is_dir():
         out["bytes"] = sum(f.stat().st_size
                            for f in ARCHIVE_DIR.rglob("*.jsonl.gz"))
+    out["articles"] = sum(day_count(d) for d in days)
     if days:
         have = set(days)
         d = datetime.strptime(days[0], "%Y-%m-%d")
@@ -246,3 +289,53 @@ def status() -> dict:
         except (OSError, json.JSONDecodeError):
             pass
     return out
+
+
+# --------------------------------------------------------------------------
+# Searching -- what a report run reads instead of scraping
+# --------------------------------------------------------------------------
+
+def search(start: datetime, end: datetime, keywords: list[str],
+           min_words: int = 25, drop_aggregators: bool = True,
+           verbose: bool = False):
+    """Stored articles in the window that mention one of the keywords.
+
+    Returns `corpus.Doc` objects, the same type `corpus.build_docs` produces
+    from live fetching, so the rest of the pipeline -- dedupe, rerank, report --
+    does not know or care which path the articles came from.
+
+    Matching runs over title plus body. Live discovery matches the URL slug
+    first because fetching every candidate is expensive; here the text is
+    already on disk, so the stricter check is also the cheaper one.
+    """
+    import corpus
+
+    docs, seen, scanned = [], set(), 0
+    for r in read_range(start, end):
+        scanned += 1
+        url = r.get("url") or ""
+        if url in seen:
+            continue
+        text = (r.get("text") or "").strip()
+        title = (r.get("title") or "").strip()
+        if len(text.split()) < min_words:
+            continue
+        if keywords and not nm.match(f"{title}\n{text}", keywords):
+            continue
+        if drop_aggregators:
+            art = nm.Article(url=url, source=r.get("source", ""), title=title)
+            if nm.is_aggregator(art):
+                continue
+        seen.add(url)
+        docs.append(corpus.Doc(
+            url=url,
+            source=r.get("source", ""),
+            published=r.get("published") or "",
+            title=title,
+            text=text,
+            lang=r.get("language", ""),
+        ))
+
+    if verbose:
+        print(f"  archive: {scanned} stored articles scanned, {len(docs)} matched")
+    return docs

@@ -79,7 +79,7 @@ jobs:
       - name: Ship the compose file and scripts
         run: |
           ssh -i ~/.ssh/deploy_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" 'mkdir -p ~/media_monitoring'
-          scp -i ~/.ssh/deploy_key docker-compose.yml deploy/remote-deploy.sh deploy/wait-healthy.sh deploy/prewarm-model.sh \
+          scp -i ~/.ssh/deploy_key docker-compose.yml deploy/remote-deploy.sh deploy/wait-healthy.sh deploy/prewarm-model.sh deploy/harvest-cron.sh \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/media_monitoring/"
 
       - name: Pull and restart

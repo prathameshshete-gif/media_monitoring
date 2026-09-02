@@ -225,6 +225,7 @@ Fadnavis
     <label for="minrel">Relevance floor — <span id="minrelv">0.02</span></label>
     <input id="minrel" type="range" min="0" max="0.6" step="0.01" value="0.02">
 
+    <div class="check"><input type="checkbox" id="archive"><label for="archive" style="margin:0">Use saved archive (fast, works for old dates)</label></div>
     <div class="check"><input type="checkbox" id="deep"><label for="deep" style="margin:0">Body matching (slow, low yield)</label></div>
     <div class="check"><input type="checkbox" id="report"><label for="report" style="margin:0">Write report (needs GEMINI_API_KEY)</label></div>
 
@@ -266,6 +267,10 @@ Fadnavis
           <select id="srcFilter"><option value="">all</option></select>
         </label>
         <span id="count" style="color:var(--muted)"></span>
+        <span style="flex:1"></span>
+        <button class="dl" id="dlCsv" title="Article table for Excel">.csv</button>
+        <button class="dl" id="dlCsvText" title="Article table with the full text of every kept article">.csv + text</button>
+        <button class="dl" id="dlTxt" title="The exact text sent to the model">.txt</button>
       </div>
       <div class="scroll">
         <table>
@@ -457,6 +462,20 @@ function reportTitle(){
   const t = $("title").textContent || "Media report";
   return { title: `माध्यम अहवाल — ${t}`, sub: $("reportMeta").textContent || "" };
 }
+
+// Source documents behind a run. Served by the API, not built in the browser,
+// so the CSV carries the byte-order mark Excel needs to read Devanagari.
+$("dlCsv").onclick = () => {
+  window.location.href = `/api/runs/${current}/articles.csv`;
+};
+
+$("dlCsvText").onclick = () => {
+  window.location.href = `/api/runs/${current}/articles.csv?text=1`;
+};
+
+$("dlTxt").onclick = () => {
+  window.location.href = `/api/runs/${current}/corpus.txt`;
+};
 
 $("dlMd").onclick = () => {
   // Served by the API so the file is named after the run and comes straight
@@ -677,6 +696,7 @@ $("go").onclick = async () => {
     start: fmt($("start").value), end: fmt($("end").value),
     min_relevance: +$("minrel").value,
     deep: $("deep").checked, report: $("report").checked,
+    use_archive: $("archive").checked,
     // Sent explicitly from the entity's stored brief — the server does not
     // pick one for us.
     system_prompt: (currentProfile()?.system_prompt) ?? pendingBrief
@@ -688,6 +708,7 @@ $("go").onclick = async () => {
   STAGES.forEach(s => $("stages").insertAdjacentHTML("beforeend",
     `<span class="pill" data-s="${s}">${s}</span>`));
 
+  if (body.use_archive) body.deep = false;   // no fetching, so nothing to deepen
   const res = await fetch("/api/run", {method:"POST",
     headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
   if(!res.ok){ log("error", (await res.json()).detail || "failed to start"); $("go").disabled = false; return; }
