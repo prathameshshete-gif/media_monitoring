@@ -1,0 +1,22 @@
+[
+ {
+  "id": "example-cabinet-minister",
+  "name": "Example Cabinet Minister",
+  "subject": "Example Cabinet Minister, holder of a senior state portfolio",
+  "terms": [
+   "Example Minister",
+   "उदाहरण मंत्री"
+  ],
+  "system_prompt": ""
+ },
+ {
+  "id": "example-backbench-mla",
+  "name": "Example Backbench MLA",
+  "subject": "Example Backbench MLA, representing a rural constituency",
+  "terms": [
+   "Example MLA",
+   "उदाहरण आमदार"
+  ],
+  "system_prompt": ""
+ }
+]

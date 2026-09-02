@@ -21,6 +21,10 @@ langchain-core==1.4.8
 langchain-google-genai==4.2.6
 python-dotenv==1.2.2
 
+# Profile storage. dnspython is what makes mongodb+srv:// URIs resolve.
+pymongo==4.17.0
+dnspython==2.8.0
+
 # Web frontend
 fastapi==0.136.1
 uvicorn[standard]==0.48.0

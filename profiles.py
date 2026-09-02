@@ -1,26 +1,30 @@
-"""Entity profiles: who we monitor, what we search for, how the report reads.
+"""Entity profiles: who is monitored, what is searched for, how the report reads.
 
 A profile bundles the three things a run needs — the subject line the reranker
 scores against, the search terms discovery matches on, and the system prompt
 that writes the report for that entity.
 
 Every profile carries its own brief, in full. There is no fallback: what you
-see in the settings dialog is exactly what gets sent. New profiles start from
-the stock Marathi brief and are edited from there.
+see in the settings dialog is exactly what gets sent.
 
-Stored as one JSON file so a profile can be edited by hand or checked into
-version control. The seed set is written on first load and never re-applied, so
-edits and deletions stick.
+Storage. A profile list is operational configuration — who a client watches and
+the editorial lens applied to them — so it does not belong in the repository.
+With `MONGODB_URI` set, profiles live in MongoDB Atlas. Without it they fall
+back to a local JSON file, which is what a laptop with no cluster gets. Either
+way the collection is seeded from `profiles.example.json` when it is empty, so
+a fresh checkout has something to look at.
 
 Search-term rules, learned the hard way (see README):
   - Every name needs its Devanagari form. Marathi matching is substring-based,
-    so spelling variants (बावनकुळे / बावनकुले) each need their own entry.
-  - A surname alone is only safe when it is distinctive. `पाटील`, `चव्हाण` and
-    `भोसले` pull in dozens of unrelated people; `बावनकुळे` or `अडसड` do not.
-    Low-profile figures need the loose surname to be found at all, so the
-    distinction is per name, not a blanket rule.
-  - `मोहोळ` looks distinctive but is also a Solapur taluka, so Murlidhar Mohol
-    is full-name only.
+    so spelling variants each need their own entry — a name transliterated with
+    ळ in one outlet and ल in another will not match itself.
+  - A surname alone is only safe when it is distinctive. Common ones such as
+    पाटील, चव्हाण and भोसले pull in dozens of unrelated people; a rare surname
+    does not. Low-profile figures need the loose surname to be found at all, so
+    the distinction is per name, not a blanket rule.
+  - Check a distinctive-looking surname against place names before trusting it.
+    Several Marathi surnames are also talukas, and those need full-name-only
+    matching or the run fills with datelines.
 """
 
 from __future__ import annotations
@@ -31,9 +35,41 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-# In the container this points into the data volume, seeded from the copy
-# baked into the image, so UI edits survive a redeploy.
+# Set to an Atlas SRV string to store profiles there. Empty means file storage.
+MONGODB_URI = os.getenv("MONGODB_URI", "")
+MONGODB_DB = os.getenv("MONGODB_DB", "media_monitoring")
+PROFILES_COLLECTION = os.getenv("MONGODB_PROFILES_COLLECTION", "profiles")
+SETTINGS_COLLECTION = os.getenv("MONGODB_SETTINGS_COLLECTION", "settings")
+
+# The file backend. In a container without Atlas this points into the data
+# volume so UI edits survive a redeploy.
 STORE = Path(os.getenv("PROFILES_PATH", "profiles.json"))
+
+# Shipped in the repo, deliberately generic: two placeholder entities that show
+# the shape of a profile without naming anyone real.
+EXAMPLE = Path(os.getenv("PROFILES_EXAMPLE", "profiles.example.json"))
+
+_client = None
+
+
+def using_mongo() -> bool:
+    return bool(MONGODB_URI)
+
+
+def _db():
+    """One client per process, opened on first use.
+
+    MongoClient is lazy about connecting, so building it costs nothing until a
+    query runs; that keeps import time flat for callers that never touch
+    profiles, such as the CLI pipeline.
+    """
+    global _client
+    if _client is None:
+        from pymongo import MongoClient
+        _client = MongoClient(MONGODB_URI, appname="media-monitor",
+                              serverSelectionTimeoutMS=10000,
+                              connectTimeoutMS=10000)
+    return _client[MONGODB_DB]
 
 
 def _slug(name: str) -> str:
@@ -41,87 +77,99 @@ def _slug(name: str) -> str:
 
 
 def default_prompt() -> str:
-    """The stock Marathi brief every new profile starts from.
+    """The brief a new profile starts from.
 
-    Imported lazily: report_llm pulls in LangChain, and nothing here needs it
-    until a profile is actually being seeded or reset.
+    An operator's real brief is their own editorial IP, so it is stored
+    alongside the profiles rather than in the source. `report_llm.SYSTEM_PROMPT`
+    is the generic template that ships with the repo, used until someone saves
+    one of their own.
     """
+    if using_mongo():
+        doc = _db()[SETTINGS_COLLECTION].find_one({"_id": "default_prompt"})
+        if doc and (doc.get("text") or "").strip():
+            return doc["text"]
     from report_llm import SYSTEM_PROMPT
     return SYSTEM_PROMPT
 
 
-def _p(name: str, subject: str, terms: list[str]) -> dict:
-    return {"id": _slug(name), "name": name, "subject": subject,
-            "terms": terms, "system_prompt": ""}
+def set_default_prompt(text: str) -> None:
+    """Store the house brief, so new profiles start from it rather than the
+    generic template. Mongo only: with file storage there is nowhere to put it
+    that is not the repository."""
+    if not using_mongo():
+        raise RuntimeError("Set MONGODB_URI to store a house brief")
+    _db()[SETTINGS_COLLECTION].replace_one(
+        {"_id": "default_prompt"},
+        {"_id": "default_prompt", "text": text,
+         "updated": datetime.now().isoformat(timespec="seconds")},
+        upsert=True)
 
 
-# Seeded on first load only. Editing or deleting these in the UI is permanent.
-SEED = [
-    _p("Devendra Fadnavis",
-       "Devendra Fadnavis, Chief Minister of Maharashtra",
-       ["Devendra Fadnavis", "Fadnavis", "देवेंद्र फडणवीस", "फडणवीस"]),
-    _p("Ravindra Chavan",
-       "Ravindra Chavan, Maharashtra BJP state president",
-       ["Ravindra Chavan", "Chavan Ravindra", "रवींद्र चव्हाण", "रविंद्र चव्हाण"]),
-    _p("Chandrashekhar Bawankule",
-       "Chandrashekhar Bawankule, Revenue Minister of Maharashtra",
-       ["Chandrashekhar Bawankule", "Chandrasekhar Bawankule", "Bawankule",
-        "चंद्रशेखर बावनकुळे", "बावनकुळे", "बावनकुले"]),
-    _p("Murlidhar Mohol",
-       "Murlidhar Mohol, Union Minister of State and MP from Pune",
-       ["Murlidhar Mohol", "Muralidhar Mohol", "मुरलीधर मोहोळ",
-        "मुरलीधर मोहोल"]),
-    _p("Atul Bhosale",
-       "Atul Bhosale, BJP MLA from Karad South",
-       ["Atul Bhosale", "Atul Bhosle", "अतुल भोसले"]),
-    _p("Siddharth Shirole",
-       "Siddharth Shirole, BJP MLA from Shivajinagar, Pune",
-       ["Siddharth Shirole", "Siddharth Sirole", "Shirole",
-        "सिद्धार्थ शिरोळे", "शिरोळे", "शिरोले"]),
-    _p("Hemant Rasane",
-       "Hemant Rasane, BJP MLA from Kasba Peth, Pune",
-       ["Hemant Rasane", "Rasane", "हेमंत रासने", "रासने"]),
-    _p("Ranajagjitsinha Patil",
-       "Ranajagjitsinha Patil, BJP MLA from Dharashiv",
-       ["Ranajagjitsinha Patil", "Rana Jagjitsinha Patil", "Ranajagjitsinha",
-        "राणाजगजितसिंह पाटील", "राणा जगजितसिंह पाटील", "राणाजगजितसिंह",
-        "राणाजगजीतसिंह"]),
-    _p("Pratap Adsad",
-       "Pratap Adsad, BJP MLA from Dhamangaon Railway",
-       ["Pratap Adsad", "Adsad", "प्रताप अडसड", "अडसड"]),
-    _p("Kunal Patil",
-       "Kunal Patil, MLA from Dhule Rural",
-       ["Kunal Patil", "कुणाल पाटील", "कुनाल पाटील"]),
-    _p("Rahul Kalate",
-       "Rahul Kalate, politician from Chinchwad, Pimpri-Chinchwad",
-       ["Rahul Kalate", "Kalate", "राहुल कलाटे", "कलाटे"]),
-    _p("Pankaj Bhoyar",
-       "Pankaj Bhoyar, BJP MLA from Wardha and Minister of State",
-       ["Pankaj Bhoyar", "Bhoyar", "पंकज भोयर", "भोयर"]),
-]
+# --------------------------------------------------------------------------
+# Seeding
+# --------------------------------------------------------------------------
+
+def _example_profiles() -> list[dict]:
+    """The placeholder set, with every brief filled in."""
+    if not EXAMPLE.exists():
+        return []
+    try:
+        data = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(data, list):
+        return []
+    brief = None
+    for p in data:
+        if not (p.get("system_prompt") or "").strip():
+            if brief is None:
+                from report_llm import SYSTEM_PROMPT
+                brief = SYSTEM_PROMPT
+            p["system_prompt"] = brief
+    return data
 
 
-def _seeded() -> list[dict]:
-    """SEED with every brief filled in, so no profile ships without one."""
-    brief = default_prompt()
-    return [dict(p, system_prompt=brief) for p in SEED]
+# --------------------------------------------------------------------------
+# Read and write
+# --------------------------------------------------------------------------
+
+def _normalise(doc: dict) -> dict:
+    """Mongo's _id is the profile id; the API has always called it `id`."""
+    out = dict(doc)
+    out["id"] = out.pop("_id", out.get("id"))
+    out.pop("created", None)
+    return out
 
 
 def load() -> list[dict]:
+    if using_mongo():
+        coll = _db()[PROFILES_COLLECTION]
+        if coll.count_documents({}, limit=1) == 0:
+            seeded = _example_profiles()
+            if seeded:
+                save(seeded)
+                return seeded
+            return []
+        # `created` keeps the list in the order profiles were added, which is
+        # the order the file backend gave for free.
+        return [_normalise(d) for d in coll.find().sort([("created", 1),
+                                                         ("name", 1)])]
+
     if not STORE.exists():
-        seeded = _seeded()
-        save(seeded)
+        seeded = _example_profiles()
+        if seeded:
+            save(seeded)
         return seeded
     try:
         data = json.loads(STORE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return _seeded()
+        return _example_profiles()
     if not isinstance(data, list):
-        return _seeded()
+        return _example_profiles()
 
-    # Profiles written before briefs were stored per entity carry an empty
-    # one. Fill those in once so every profile has a brief you can read and
-    # edit, rather than an invisible default applied at send time.
+    # Profiles written before briefs were stored per entity carry an empty one.
+    # Fill those in once so every profile has a brief you can read and edit,
+    # rather than an invisible default applied at send time.
     missing = [p for p in data if not (p.get("system_prompt") or "").strip()]
     if missing:
         brief = default_prompt()
@@ -132,11 +180,27 @@ def load() -> list[dict]:
 
 
 def save(profiles: list[dict]) -> None:
+    """Replace the whole set. Used for seeding and migration; ordinary edits go
+    through upsert/delete so two editors cannot clobber each other's work."""
+    if using_mongo():
+        coll = _db()[PROFILES_COLLECTION]
+        now = datetime.now().isoformat(timespec="seconds")
+        for i, p in enumerate(profiles):
+            doc = dict(p)
+            pid = doc.pop("id", None) or _slug(doc.get("name", ""))
+            doc["_id"] = pid
+            # Preserve list order across the move into Mongo.
+            doc.setdefault("created", f"{now}#{i:04d}")
+            coll.replace_one({"_id": pid}, doc, upsert=True)
+        return
     STORE.write_text(json.dumps(profiles, indent=1, ensure_ascii=False),
                      encoding="utf-8")
 
 
 def get(profile_id: str) -> dict | None:
+    if using_mongo():
+        doc = _db()[PROFILES_COLLECTION].find_one({"_id": profile_id})
+        return _normalise(doc) if doc else None
     return next((p for p in load() if p["id"] == profile_id), None)
 
 
@@ -161,6 +225,18 @@ def upsert(profile: dict) -> dict:
         "system_prompt": brief,
         "updated": datetime.now().isoformat(timespec="seconds"),
     }
+
+    if using_mongo():
+        coll = _db()[PROFILES_COLLECTION]
+        doc = dict(record)
+        doc["_id"] = doc.pop("id")
+        # A new profile sorts to the end of the list; an existing one keeps the
+        # position it already had.
+        existing = coll.find_one({"_id": pid}, {"created": 1})
+        doc["created"] = (existing or {}).get("created") or record["updated"]
+        coll.replace_one({"_id": pid}, doc, upsert=True)
+        return record
+
     profiles = load()
     for i, p in enumerate(profiles):
         if p["id"] == pid:
@@ -173,6 +249,9 @@ def upsert(profile: dict) -> dict:
 
 
 def delete(profile_id: str) -> bool:
+    if using_mongo():
+        return _db()[PROFILES_COLLECTION].delete_one(
+            {"_id": profile_id}).deleted_count > 0
     profiles = load()
     kept = [p for p in profiles if p["id"] != profile_id]
     if len(kept) == len(profiles):

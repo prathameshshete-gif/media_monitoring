@@ -25,6 +25,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Declaring this block sets every unlisted scope to none. The build cache
+      # talks to the Actions cache service, so it needs `actions` explicitly.
+      actions: write
     outputs:
       image: ${{ steps.name.outputs.image }}
     steps:
@@ -52,10 +55,9 @@ jobs:
           tags: |
             ${{ steps.name.outputs.image }}:latest
             ${{ steps.name.outputs.image }}:${{ github.sha }}
-          # The torch layer is ~800 MB and identical between builds; without a
-          # cache every push re-downloads and re-pushes it.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Caching is deliberately off until a run goes green: the gha cache
+          # backend is a failure mode of its own, and a cold torch build costs
+          # only ~8 minutes. Re-add `cache-from/to: type=gha` afterwards.
 
   deploy:
     name: Deploy to EC2

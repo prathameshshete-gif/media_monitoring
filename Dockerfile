@@ -29,6 +29,7 @@ COPY *.py ./
 COPY static/ ./static/
 # The curated profile set. The entrypoint copies this into the data volume the
 # first time only, so edits made in the UI survive redeploys.
+COPY profiles.example.json ./profiles.example.json
 COPY profiles.json ./profiles.json.seed
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
