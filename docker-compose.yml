@@ -19,8 +19,12 @@ services:
       # contention with nginx and the other containers on this box.
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
+      ARCHIVE_DIR: "/app/news_articles_for_media_monitoring"
 
     volumes:
+      # The news archive, on the host filesystem rather than in a Docker volume
+      # so it can be listed, copied and backed up without going through Docker.
+      - /home/ubuntu/news_articles_for_media_monitoring:/app/news_articles_for_media_monitoring
       - runs:/app/runs                # pipeline output, browsable from the UI
       - data:/app/data                # profiles.json, edited from the UI
       - page-cache:/app/page-cache    # scraped pages; makes re-runs free

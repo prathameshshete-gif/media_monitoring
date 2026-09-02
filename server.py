@@ -236,6 +236,17 @@ async def api_events(run_id: str):
                                       "X-Accel-Buffering": "no"})
 
 
+@app.get("/api/archive")
+def api_archive():
+    """What the nightly harvest has stored, and which days are missing.
+
+    `missing` is the number to watch: a sitemap lists about 48 hours, so a day
+    with no folder is a day whose news cannot be recovered.
+    """
+    import archive
+    return archive.status()
+
+
 @app.get("/api/status")
 def api_status():
     running = [j["id"] for j in JOBS.values() if j["state"] == "running"]

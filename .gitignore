@@ -6,6 +6,10 @@
 # Scraped page cache. Regenerates itself on the next run; hundreds of MB.
 .cache/
 
+# The news archive. Gigabytes of article text, and the whole point of it is
+# that it lives on the server and outlives any checkout.
+news_articles_for_media_monitoring/
+
 # Pipeline output. Each run is a self-contained directory under runs/, and the
 # reports are downloadable from the UI, so none of it belongs in the repo.
 runs/
